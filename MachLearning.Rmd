@@ -1,0 +1,158 @@
+---
+title: "MachLearnProj"
+author: "Martin Skarzynski"
+date: "January 7, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Practical Machine Learning Course Project
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+## Install packages
+* install.packages("caret")
+* install.packages("randomForest")
+* install.packages("rattle")
+* install.packages("rpart")
+* install.packages("rpart.plot")
+* install.packages("compare")
+
+##Obtain Data
+```{r, message=FALSE, warning=FALSE}
+## Download data
+url_train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+dat_train <- "pml-training.csv"
+download.file(url=url_train, destfile=dat_train, method = "auto")
+url_test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+dat_test <- "pml-testing.csv"
+download.file(url=url_test, destfile=dat_test, method = "auto")
+## Import data and convert empty values to NA.
+df_train <- read.csv(dat_train, na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_train)
+df_test <- read.csv(dat_test, na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_test)
+```
+
+## Data Transformation: Remove NAs and IDs
+```{r message=FALSE, warning=FALSE}
+## Check number and percentage of NAs in test set
+colSums(!is.na(df_test))
+colMeans(is.na(df_test))*100
+## Remove columns with only NAs in test set
+df_testNoNA <- df_test[, colSums(is.na(df_test)) != nrow(df_test)]
+df_trainSub <- df_train[, colSums(is.na(df_test)) != nrow(df_test)]
+## We are left with two datasets that have 60 variables, instead of 160.
+dim(df_testNoNA)
+dim(df_trainSub)
+## Check to see that colnames are the same in the two new datasets
+colnames_trainSub <- colnames(df_trainSub)
+colnames_testNoNA <- colnames(df_testNoNA)
+setdiff(colnames_testNoNA,colnames_trainSub)
+setdiff(colnames_trainSub,colnames_testNoNA)
+## remove id columns from the new datasets
+df_testTrim<- df_testNoNA[,c(-1, -60)]
+df_trainTrim<- df_trainSub[,-1]
+## No need to impute missing values, because there are no NAs in new training set
+```
+##Data Splitting
+```{r message=FALSE, warning=FALSE}
+## Data Partitioning: 65% for training and 35% for testing
+## I use the training set (df_trainTrim) as the source
+## for the new training and testing sets,
+## and leave the test set (df_testTrim) untouched.
+set.seed(54321)
+library(caret)
+TrainSub <- createDataPartition(y=df_trainTrim$classe, p=0.65, list=FALSE)
+myTraining <- df_trainTrim[TrainSub, ]
+myTesting <- df_trainTrim[-TrainSub, ]
+dim(myTraining)
+dim(myTesting)
+```
+## Check for near zero variables
+```{r message=FALSE, warning=FALSE}
+nsv<- nearZeroVar(df_trainTrim, saveMetrics = TRUE)
+nsv
+```
+## Check to see which variables are highly correlated
+```{r message=FALSE, warning=FALSE}
+M <- abs(cor(df_trainTrim[,c(-1,-4,-5,-59)]))
+diag(M) <- 0
+which(M>0.8, arr.ind = TRUE)
+```
+## Principle Component Analysis
+```{r message=FALSE, warning=FALSE}
+## Use caret package to perform principle component analysis
+preProc <- preProcess(df_trainTrim[,c(-1,-4,-5,-59)], method = "pca", pcaComp = 2)
+PC<-predict(preProc,df_trainTrim[,c(-1,-4,-5,-59)])
+plot(PC[,1],PC[,2], col=df_trainTrim$classe)
+plot(PC[,1],PC[,2], col=df_trainTrim$user_name)
+##PCA splits up the data by user well, but not by classe
+## I included this because I thought the graphs looked nice:)
+```
+## Machine Learning
+```{r message=FALSE, warning=FALSE}
+## First, I use the Decision Tree method
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+modDT <- rpart(classe ~ ., data=myTraining, method="class")
+predDT <- predict(modDT, myTesting, type = "class")
+fancyRpartPlot(modDT)
+## This graph looks terrible, because the text is too small.
+## I think it would look better without the timestamp variables.
+cfmDT<-confusionMatrix(predDT, myTesting$classe)
+cfmDT
+(accuracy_dt <- cfmDT$overall[1])
+## Next, I use the Random Forest method
+modRF <- randomForest(classe ~ ., data=myTraining)
+predRF <- predict(modRF, myTesting, type = "class")
+cfmRF<-confusionMatrix(predRF, myTesting$classe)
+cfmRF
+plot(modRF)
+(accuracy_rf <- cfmRF$overall[1])
+```
+## Conclusion
+Above, I compare Decision Tree (DT) and Random Forest (RF) methods.
+Random Forest is clearly the superior method for this dataset,
+as demonstrated by the much higher accuracy.
+I will still use both methods to obtain answers for the Quiz,
+so that we can compare the results.
+
+## Generate answers for the Quiz
+```{r message=FALSE, warning=FALSE}
+
+## First, using the Decision Tree model (modDT)
+predFinalDT <- predict(modDT, df_testTrim, type="class")
+predFinalDT 
+
+
+## Now with the random forest model (modRF)...
+## I had a problem with the classes not matching in my test and train sets
+## Here is my quick work-around:
+## First, I bind the twenty-first row of myTraining set to the test set
+## then I delete it.
+## Not sure what the expert consensus on this will be,
+## but I think it is faster than coercing using a loop.
+
+testing <- rbind(myTraining[21, -59] , df_testTrim)
+testing <- testing[-1,]
+
+## When I compare the two datasets, 
+## it turns out that the 4th and 5th columns were causing problems.
+## These are cvtd_timestamp and new_window, respectively.
+## If you removed these variables, I bet you didn't have this problem.
+library(compare)
+compare(df_testTrim,testing,allowAll=FALSE)
+compare(df_testTrim,testing,allowAll=TRUE)
+
+## Here I obtain the final set of answers for the quiz
+predFinalRF <- predict(modRF, testing, type="class")
+predFinalRF
+
+```
+
